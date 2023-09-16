@@ -9,6 +9,10 @@
 #define HAPPY_BLINK_NUM           2
 #define LTN_LED_PIN              23
 
+#define LTN_AMBER                  0xFEA9
+#define LTN_GREEN                  0xAFC9
+#define LTN_CYAN                   TFT_CYAN
+
 // Keyboard debouncing interval
 #define BTN_DEBOUNCE_INTERVAL    25
 
@@ -40,6 +44,7 @@
 #define BTN_SLEW_UP              17
 #define BTN_SLEW_DOWN            24
 #define BTN_A_N                   2
+#define BTN_ENT                   0
 
 TFT_eSPI tft;
 
@@ -184,6 +189,78 @@ void setup()
 	happy_blink();
 }
 
+static const uint8_t *glyph(char input)
+{
+	if (input >= 'A' && input <= 'Z')
+		return LTR(input - 'A');
+
+	if (input >= '0' && input <= '9')
+		return NUM(input - '0');
+
+	switch (input) {
+	case ' ':
+		return SYM(0);
+	case '!':
+		return SYM(1);
+	case '"':
+		return SYM(2);
+	case '#':
+		return SYM(3);
+	case '\'':
+		return SYM(4);
+	case '*':
+		return SYM(5);
+	case '+':
+		return SYM(6);
+	case ',':
+		return SYM(7);
+	case '-':
+		return SYM(8);
+	case '.':
+		return SYM(9);
+	case '/':
+		return SYM(10);
+	case ':':
+		return SYM(11);
+	case ';':
+		return SYM(12);
+	case '<':
+		return SYM(13);
+	case '=':
+		return SYM(14);
+	case '>':
+		return SYM(15);
+	case '?':
+		return SYM(16);
+	case '[':
+		return SYM(17);
+	case '\\':
+		return SYM(18);
+	case ']':
+		return SYM(19);
+	case '_':
+		return SYM(20);
+	case 'a':
+		return SYM(21);
+	case 'b':
+		return SYM(22);
+	case 'f':
+		return SYM(23);
+	case 'l':
+		return SYM(24);
+	case 'r':
+		return SYM(25);
+	case 's':
+		return SYM(26);
+	case 't':
+		return SYM(27);
+	case '|':
+		return SYM(28);
+	default:
+		return nullptr;
+	}
+}
+
 static void power_off_annunciators()
 {
 	for (int i = 0; i < 4; ++i)
@@ -226,15 +303,40 @@ static void display_to_array(char *buf)
 	}
 }
 
-static void array_to_tft(char *buf)
+static void diff_to_tft(char *buf_old, char *buf_new, uint32_t fg)
 {
-	char line_buf[17];
-	line_buf[16] = 0;
-	tft.fillScreen(TFT_BLACK);
-	tft.setCursor(10, 10, 4);
+	const int dx = 7;
+	const int dy = 16;
+	const int offs_x = (480 - (GLYPH_WIDTH  + dx) * 16 + dx) / 2;
+	const int offs_y = (320 - (GLYPH_HEIGHT + dy) *  5 + dy) / 2;
+
 	for (int i = 0; i < 5; ++i) {
-		memcpy(line_buf, buf + i * 16, 16);
-		tft.println(line_buf);
+		for (int j = 0; j < 16; ++j) {
+			int k = i * 16 + j;
+			if (buf_old[k] == buf_new[k])
+				continue;
+
+			int x = offs_x + j * (GLYPH_WIDTH  + dx);
+			int y = offs_y + i * (GLYPH_HEIGHT + dy);
+			const uint8_t *g = glyph(buf_new[k]);
+			if (g != nullptr)
+			  tft.drawBitmap(x, y, g, GLYPH_WIDTH, GLYPH_HEIGHT, fg, TFT_BLACK);
+		}
+	}
+}
+
+static void draw_entry_line_marker(bool enabled)
+{
+	const int spot_x1 = 10;
+	const int spot_x2 = 480 - spot_x1;
+	const int spot_y = 320 / 2;
+	const int spot_r = 5;
+	if (enabled) {
+		tft.drawSpot(spot_x1, spot_y, spot_r, LTN_AMBER, TFT_BLACK);
+		tft.drawSpot(spot_x2, spot_y, spot_r, LTN_AMBER, TFT_BLACK);
+	} else {
+		tft.fillRect(spot_x1 - spot_r, spot_y - spot_r, spot_r*2+1, spot_r*2+1, TFT_BLACK);
+		tft.fillRect(spot_x2 - spot_r, spot_y - spot_r, spot_r*2+1, spot_r*2+1, TFT_BLACK);
 	}
 }
 
@@ -250,13 +352,21 @@ static void update()
 {
 	char buf_old[5 * 16];
 	char buf_new[5 * 16];
+	static bool was_input_active;
+	static int prev_color;
 
 	if (btn_a_n_overlong_press) {
 		state = STATE_CDU_SELECT;
 		return;
 	}
 
-	display_to_array(buf_old);
+	if (prev_state == STATE_ACTIVE) {
+		display_to_array(buf_old);
+	} else {
+		tft.fillScreen(TFT_BLACK);
+		memset(buf_old, 0, sizeof(buf_old));
+		was_input_active = false;
+	}
 
 	FlightSim.update();
 
@@ -267,9 +377,21 @@ static void update()
 
 	display_to_array(buf_new);
 
+	if (prev_color != ltn_color_option) {
+		prev_color = ltn_color_option;
+
+		// invalidate whole screen
+		memset(buf_old, 0, sizeof(buf_old));
+	}
+
 	analogWrite(LTN_LED_PIN, ltn->brightness * 255);
-	if (prev_state != STATE_ACTIVE || memcmp(buf_old, buf_new, sizeof(buf_old)) != 0)
-		array_to_tft(buf_new);
+	if (memcmp(buf_old, buf_new, sizeof(buf_old)) != 0)
+		diff_to_tft(buf_old, buf_new, (ltn_color_option == 0) ? LTN_GREEN : LTN_AMBER);
+
+	if (ltn->input_active != was_input_active) {
+		draw_entry_line_marker(ltn->input_active);
+		was_input_active = ltn->input_active;
+	}
 
 	update_annunciators();
 
@@ -279,13 +401,71 @@ static void update()
 
 static void cdu_select()
 {
-	if (1) {
-		state = STATE_ACTIVE;
+	static char buf_old[5 * 16];
+	static char buf_new[] =
+		" SELECT ACT CDU "
+		"                "
+		"                "
+		"                "
+		"                ";
+	static int was_selected;
+	static program_state return_state;
+
+	FlightSim.update();
+
+	if (prev_state != STATE_CDU_SELECT) {
+		was_selected = (int)(ltn - ltns);
+		tft.fillScreen(TFT_BLACK);
+		memset(buf_old, 0, sizeof(buf_old));
+		draw_entry_line_marker(true);
+		return_state = prev_state;
+
+		if (prev_state != STATE_ACTIVE)
+			digitalWrite(LTN_LED_PIN, HIGH);
+	}
+
+	int selected = was_selected;
+
+	if (btn_letters[BTN_SLEW_UP].fell()) {
+		++selected;
+		if (selected > 2)
+			selected = 2;
+	}
+
+	if (btn_letters[BTN_SLEW_DOWN].fell()) {
+		--selected;
+		if (selected < 0)
+			selected = 0;
+	}
+
+	if (btn_side[BTN_ENT].fell()) {
+		state = return_state;
+		ltn = &ltns[selected];
 
 		// any timer running on button A_N must not be carried
 		// over into next mode
 		checking_a_n_overlong = false;
 		return;
+	}
+
+	if (prev_state != STATE_CDU_SELECT || selected != was_selected) {
+		// invalidate screen
+		for (int i = 1; i < 5; ++i) {
+			// offset 5 to centre
+			char *target = buf_new + i * 16 + 5;
+
+			int disp = selected + i - 1;
+			if (disp >= 1 && disp <= 3) {
+				memcpy(target, "CDU ", 4);
+				target[4] = '0' + disp;
+			} else {
+				memcpy(target, "     ", 5);
+			}
+		}
+
+		diff_to_tft(buf_old, buf_new, LTN_CYAN);
+		memcpy(buf_old, buf_new, sizeof(buf_old));
+		was_selected = selected;
 	}
 }
 
