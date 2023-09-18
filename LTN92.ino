@@ -133,20 +133,20 @@ static void ltn_init(int idx)
 
 static void keyboard_init()
 {
-	for (int i = 0; i < 4; ++i) {
+	for (int i = 0; i < 8; ++i) {
 		// high impedance mode
-		pinMode(row_pins[i], INPUT);
+		pinMode(col_pins[i], INPUT);
 	}
 
 	for (int i = 0; i < 4; ++i) {
 		for (int j = 0; j < 7; ++j) {
-			btn_letters[i * 7 + j].attach(col_pins[j], INPUT_PULLUP);
+			btn_letters[i * 7 + j].attach(row_pins[i], INPUT_PULLUP);
 			btn_letters[i * 7 + j].interval(BTN_DEBOUNCE_INTERVAL);
 		}
 	}
 
 	for (int i = 0; i < 3; ++i) {
-		btn_side[i].attach(col_pins[7], INPUT_PULLUP);
+		btn_side[i].attach(row_pins[i + 1], INPUT_PULLUP);
 		btn_side[i].interval(BTN_DEBOUNCE_INTERVAL);
 	}
 }
@@ -320,7 +320,7 @@ static void diff_to_tft(char *buf_old, char *buf_new, uint32_t fg)
 			int y = offs_y + i * (GLYPH_HEIGHT + dy);
 			const uint8_t *g = glyph(buf_new[k]);
 			if (g != nullptr)
-			  tft.drawBitmap(x, y, g, GLYPH_WIDTH, GLYPH_HEIGHT, fg, TFT_BLACK);
+				tft.drawBitmap(x, y, g, GLYPH_WIDTH, GLYPH_HEIGHT, fg, TFT_BLACK);
 		}
 	}
 }
@@ -469,17 +469,14 @@ static void cdu_select()
 	}
 }
 
-static void scan_row(int row, Bounce *btn_7)
+static void scan_col(int col, Bounce *btns, int stride, int n)
 {
-	int pin = row_pins[row];
+	int pin = col_pins[col];
 	pinMode(pin, OUTPUT);
 	digitalWrite(pin, LOW);
 
-	for (int j = 0; j < 7; ++j)
-		btn_letters[row * 7 + j].update();
-
-	if (btn_7 != nullptr)
-		btn_7->update();
+	for (int j = 0; j < n; ++j)
+		btns[j * stride].update();
 
 	digitalWrite(pin, HIGH);
 	pinMode(pin, INPUT);
@@ -489,9 +486,9 @@ static void scan()
 {
 	static unsigned long time_ref;
 
-	scan_row(0, nullptr);
-	for (int i = 1; i < 4; ++i)
-		scan_row(i, &btn_side[i - 1]);
+	for (int i = 0; i < 7; ++i)
+		scan_col(i, btn_letters + i, 7, 4);
+	scan_col(7, btn_side, 1, 3);
 
 	btn_a_n_overlong_press = false;
 
