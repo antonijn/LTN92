@@ -12,6 +12,7 @@
 #define LTN_AMBER                  0xFEA9
 #define LTN_GREEN                  0xAFC9
 #define LTN_CYAN                   TFT_CYAN
+#define LTN_EXP_PARAM              6.2
 
 // Keyboard debouncing interval
 #define BTN_DEBOUNCE_INTERVAL    25
@@ -384,7 +385,7 @@ static void update()
 		memset(buf_old, 0, sizeof(buf_old));
 	}
 
-	analogWrite(LTN_LED_PIN, ltn->brightness * 255);
+	analogWrite(LTN_LED_PIN, exp(((double)ltn->brightness - 1.0) * LTN_EXP_PARAM) * 255);
 	if (memcmp(buf_old, buf_new, sizeof(buf_old)) != 0)
 		diff_to_tft(buf_old, buf_new, (ltn_color_option == 0) ? LTN_GREEN : LTN_AMBER);
 
